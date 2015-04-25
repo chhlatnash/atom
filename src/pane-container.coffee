@@ -1,7 +1,10 @@
 {find, flatten} = require 'underscore-plus'
-{Model} = require 'theorist'
+Grim = require 'grim'
 {Emitter, CompositeDisposable} = require 'event-kit'
 Serializable = require 'serializable'
+{createGutterView} = require './gutter-component-helpers'
+Gutter = require './gutter'
+Model = require './model'
 Pane = require './pane'
 PaneElement = require './pane-element'
 PaneContainerElement = require './pane-container-element'
@@ -18,18 +21,13 @@ class PaneContainer extends Model
 
   @version: 1
 
-  @properties
-    activePane: null
-
   root: null
-
-  @behavior 'activePaneItem', ->
-    @$activePane
-      .switch((activePane) -> activePane?.$activeItem)
-      .distinctUntilChanged()
 
   constructor: (params) ->
     super
+
+    unless Grim.includeDeprecatedAPIs
+      @activePane = params?.activePane
 
     @emitter = new Emitter
     @subscriptions = new CompositeDisposable
@@ -64,6 +62,7 @@ class PaneContainer extends Model
       new PaneElement().initialize(model)
     atom.views.addViewProvider TextEditor, (model) ->
       new TextEditorElement().initialize(model)
+    atom.views.addViewProvider(Gutter, createGutterView)
 
   onDidChangeRoot: (fn) ->
     @emitter.on 'did-change-root', fn
@@ -236,3 +235,12 @@ class PaneContainer extends Model
 
   removedPaneItem: (item) ->
     @itemRegistry.removeItem(item)
+
+if Grim.includeDeprecatedAPIs
+  PaneContainer.properties
+    activePane: null
+
+  PaneContainer.behavior 'activePaneItem', ->
+    @$activePane
+      .switch((activePane) -> activePane?.$activeItem)
+      .distinctUntilChanged()

@@ -1,6 +1,5 @@
 _ = require 'underscore-plus'
 fs = require 'fs-plus'
-EmitterMixin = require('emissary').Emitter
 {CompositeDisposable, Disposable, Emitter} = require 'event-kit'
 CSON = require 'season'
 path = require 'path'
@@ -290,7 +289,6 @@ ScopeDescriptor = require './scope-descriptor'
 #
 module.exports =
 class Config
-  EmitterMixin.includeInto(this)
   @schemaEnforcers = {}
 
   @addSchemaEnforcer: (typeName, enforcerFunction) ->
@@ -334,9 +332,16 @@ class Config
     @configFilePath = fs.resolve(@configDirPath, 'config', ['json', 'cson'])
     @configFilePath ?= path.join(@configDirPath, 'config.cson')
     @transactDepth = 0
+    @savePending = false
 
-    @debouncedSave = _.debounce(@save, 100)
-    @debouncedLoad = _.debounce(@loadUserConfig, 100)
+    @requestLoad = _.debounce(@loadUserConfig, 100)
+    @requestSave = =>
+      @savePending = true
+      debouncedSave.call(this)
+    save = =>
+      @savePending = false
+      @save()
+    debouncedSave = _.debounce(save, 100)
 
   ###
   Section: Config Subscription
@@ -371,7 +376,7 @@ class Config
   observe: ->
     if arguments.length is 2
       [keyPath, callback] = arguments
-    else if arguments.length is 3 and (_.isArray(arguments[0]) or arguments[0] instanceof ScopeDescriptor)
+    else if Grim.includeDeprecatedAPIs and arguments.length is 3 and (_.isArray(arguments[0]) or arguments[0] instanceof ScopeDescriptor)
       Grim.deprecate """
         Passing a scope descriptor as the first argument to Config::observe is deprecated.
         Pass a `scope` in an options hash as the third argument instead.
@@ -380,7 +385,7 @@ class Config
     else if arguments.length is 3 and (_.isString(arguments[0]) and _.isObject(arguments[1]))
       [keyPath, options, callback] = arguments
       scopeDescriptor = options.scope
-      if options.callNow?
+      if Grim.includeDeprecatedAPIs and options.callNow?
         Grim.deprecate """
           Config::observe no longer takes a `callNow` option. Use ::onDidChange instead.
           Note that ::onDidChange passes its callback different arguments.
@@ -419,7 +424,7 @@ class Config
       [callback] = arguments
     else if arguments.length is 2
       [keyPath, callback] = arguments
-    else if _.isArray(arguments[0]) or arguments[0] instanceof ScopeDescriptor
+    else if Grim.includeDeprecatedAPIs and _.isArray(arguments[0]) or arguments[0] instanceof ScopeDescriptor
       Grim.deprecate """
         Passing a scope descriptor as the first argument to Config::onDidChange is deprecated.
         Pass a `scope` in an options hash as the third argument instead.
@@ -498,7 +503,7 @@ class Config
       if typeof arguments[0] is 'string' or not arguments[0]?
         [keyPath, options] = arguments
         {scope} = options
-      else
+      else if Grim.includeDeprecatedAPIs
         Grim.deprecate """
           Passing a scope descriptor as the first argument to Config::get is deprecated.
           Pass a `scope` in an options hash as the final argument instead.
@@ -578,7 +583,7 @@ class Config
   # * `true` if the value was set.
   # * `false` if the value was not able to be coerced to the type specified in the setting's schema.
   set: ->
-    if arguments[0]?[0] is '.'
+    if Grim.includeDeprecatedAPIs and arguments[0]?[0] is '.'
       Grim.deprecate """
         Passing a scope selector as the first argument to Config::set is deprecated.
         Pass a `scopeSelector` in an options hash as the final argument instead.
@@ -607,7 +612,7 @@ class Config
     else
       @setRawValue(keyPath, value)
 
-    @debouncedSave() if source is @getUserConfigPath() and shouldSave and not @configFileHasErrors
+    @requestSave() if source is @getUserConfigPath() and shouldSave and not @configFileHasErrors
     true
 
   # Essential: Restore the setting at `keyPath` to its default value.
@@ -617,7 +622,7 @@ class Config
   #   * `scopeSelector` (optional) {String}. See {::set}
   #   * `source` (optional) {String}. See {::set}
   unset: (keyPath, options) ->
-    if typeof options is 'string'
+    if Grim.includeDeprecatedAPIs and typeof options is 'string'
       Grim.deprecate """
         Passing a scope selector as the first argument to Config::unset is deprecated.
         Pass a `scopeSelector` in an options hash as the second argument instead.
@@ -637,7 +642,7 @@ class Config
           _.setValueForKeyPath(settings, keyPath, undefined)
           settings = withoutEmptyObjects(settings)
           @set(null, settings, {scopeSelector, source, priority: @priorityForSource(source)}) if settings?
-          @debouncedSave()
+          @requestSave()
       else
         @scopedSettingsStore.removePropertiesForSourceAndSelector(source, scopeSelector)
         @emitChangeEvent()
@@ -651,47 +656,6 @@ class Config
   # settings have been added via {::set}.
   getSources: ->
     _.uniq(_.pluck(@scopedSettingsStore.propertySets, 'source')).sort()
-
-  # Deprecated: Restore the global setting at `keyPath` to its default value.
-  #
-  # Returns the new value.
-  restoreDefault: (scopeSelector, keyPath) ->
-    Grim.deprecate("Use ::unset instead.")
-    @unset(scopeSelector, keyPath)
-    @get(keyPath)
-
-  # Deprecated: Get the global default value of the key path. _Please note_ that in most
-  # cases calling this is not necessary! {::get} returns the default value when
-  # a custom value is not specified.
-  #
-  # * `scopeSelector` (optional) {String}. eg. '.source.ruby'
-  # * `keyPath` The {String} name of the key.
-  #
-  # Returns the default value.
-  getDefault: ->
-    Grim.deprecate("Use `::get(keyPath, {scope, excludeSources: [atom.config.getUserConfigPath()]})` instead")
-    if arguments.length is 1
-      [keyPath] = arguments
-    else
-      [scopeSelector, keyPath] = arguments
-      scope = [scopeSelector]
-    @get(keyPath, {scope, excludeSources: [@getUserConfigPath()]})
-
-  # Deprecated: Is the value at `keyPath` its default value?
-  #
-  # * `scopeSelector` (optional) {String}. eg. '.source.ruby'
-  # * `keyPath` The {String} name of the key.
-  #
-  # Returns a {Boolean}, `true` if the current value is the default, `false`
-  # otherwise.
-  isDefault: ->
-    Grim.deprecate("Use `not ::get(keyPath, {scope, sources: [atom.config.getUserConfigPath()]})?` instead")
-    if arguments.length is 1
-      [keyPath] = arguments
-    else
-      [scopeSelector, keyPath] = arguments
-      scope = [scopeSelector]
-    not @get(keyPath, {scope, sources: [@getUserConfigPath()]})?
 
   # Extended: Retrieve the schema for a specific key path. The schema will tell
   # you what type the keyPath expects, and other metadata about the config
@@ -709,12 +673,6 @@ class Config
       schema = schema.properties?[key]
     schema
 
-  # Deprecated: Returns a new {Object} containing all of the global settings and
-  # defaults. Returns the scoped settings when a `scopeSelector` is specified.
-  getSettings: ->
-    Grim.deprecate "Use ::get(keyPath) instead"
-    _.deepExtend({}, @settings, @defaultSettings)
-
   # Extended: Get the {String} path to the config file being used.
   getUserConfigPath: ->
     @configFilePath
@@ -731,31 +689,6 @@ class Config
     finally
       @transactDepth--
       @emitChangeEvent()
-
-  ###
-  Section: Deprecated
-  ###
-
-  getInt: (keyPath) ->
-    Grim.deprecate '''Config::getInt is no longer necessary. Use ::get instead.
-    Make sure the config option you are accessing has specified an `integer`
-    schema. See the schema section of
-    https://atom.io/docs/api/latest/Config for more info.'''
-    parseInt(@get(keyPath))
-
-  getPositiveInt: (keyPath, defaultValue=0) ->
-    Grim.deprecate '''Config::getPositiveInt is no longer necessary. Use ::get instead.
-    Make sure the config option you are accessing has specified an `integer`
-    schema with `minimum: 1`. See the schema section of
-    https://atom.io/docs/api/latest/Config for more info.'''
-    Math.max(@getInt(keyPath), 0) or defaultValue
-
-  toggle: (keyPath) ->
-    Grim.deprecate 'Config::toggle is no longer supported. Please remove from your code.'
-    @set(keyPath, !@get(keyPath))
-
-  unobserve: (keyPath) ->
-    Grim.deprecate 'Config::unobserve no longer does anything. Call `.dispose()` on the object returned by Config::observe instead.'
 
   ###
   Section: Internal methods used by core
@@ -831,9 +764,10 @@ class Config
       CSON.writeFileSync(@configFilePath, {})
 
     try
-      userConfig = CSON.readFileSync(@configFilePath)
-      @resetUserSettings(userConfig)
-      @configFileHasErrors = false
+      unless @savePending
+        userConfig = CSON.readFileSync(@configFilePath)
+        @resetUserSettings(userConfig)
+        @configFileHasErrors = false
     catch error
       @configFileHasErrors = true
       message = "Failed to load `#{path.basename(@configFilePath)}`"
@@ -850,7 +784,7 @@ class Config
   observeUserConfig: ->
     try
       @watchSubscription ?= pathWatcher.watch @configFilePath, (eventType) =>
-        @debouncedLoad() if eventType is 'change' and @watchSubscription?
+        @requestLoad() if eventType is 'change' and @watchSubscription?
     catch error
       @notifyFailure """
         Unable to watch path: `#{path.basename(@configFilePath)}`. Make sure you have permissions to
@@ -1056,16 +990,6 @@ class Config
 
     @emitChangeEvent()
 
-  addScopedSettings: (source, selector, value, options) ->
-    Grim.deprecate("Use ::set instead")
-    settingsBySelector = {}
-    settingsBySelector[selector] = value
-    disposable = @scopedSettingsStore.addProperties(source, settingsBySelector, options)
-    @emitChangeEvent()
-    new Disposable =>
-      disposable.dispose()
-      @emitChangeEvent()
-
   setRawScopedValue: (keyPath, value, source, selector, options) ->
     if keyPath?
       newValue = {}
@@ -1093,11 +1017,6 @@ class Config
         event = {oldValue, newValue}
         oldValue = newValue
         callback(event)
-
-  settingsForScopeDescriptor: (scopeDescriptor, keyPath) ->
-    Grim.deprecate("Use Config::getAll instead")
-    entries = @getAll(null, scope: scopeDescriptor)
-    value for {value} in entries when _.valueForKeyPath(value, keyPath)?
 
 # Base schema enforcers. These will coerce raw input into the specified type,
 # and will throw an error when the value cannot be coerced. Throwing the error
@@ -1215,7 +1134,7 @@ splitKeyPath = (keyPath) ->
   startIndex = 0
   keyPathArray = []
   for char, i in keyPath
-    if char is '.' and (i is 0 or keyPath[i-1] != '\\')
+    if char is '.' and (i is 0 or keyPath[i-1] isnt '\\')
       keyPathArray.push keyPath.substring(startIndex, i)
       startIndex = i + 1
   keyPathArray.push keyPath.substr(startIndex, keyPath.length)
@@ -1232,3 +1151,70 @@ withoutEmptyObjects = (object) ->
   else
     resultObject = object
   resultObject
+
+if Grim.includeDeprecatedAPIs
+  EmitterMixin = require('emissary').Emitter
+  EmitterMixin.includeInto(Config)
+
+  Config::restoreDefault = (scopeSelector, keyPath) ->
+    Grim.deprecate("Use ::unset instead.")
+    @unset(scopeSelector, keyPath)
+    @get(keyPath)
+
+  Config::getDefault = ->
+    Grim.deprecate("Use `::get(keyPath, {scope, excludeSources: [atom.config.getUserConfigPath()]})` instead")
+    if arguments.length is 1
+      [keyPath] = arguments
+    else
+      [scopeSelector, keyPath] = arguments
+      scope = [scopeSelector]
+    @get(keyPath, {scope, excludeSources: [@getUserConfigPath()]})
+
+  Config::isDefault = ->
+    Grim.deprecate("Use `not ::get(keyPath, {scope, sources: [atom.config.getUserConfigPath()]})?` instead")
+    if arguments.length is 1
+      [keyPath] = arguments
+    else
+      [scopeSelector, keyPath] = arguments
+      scope = [scopeSelector]
+    not @get(keyPath, {scope, sources: [@getUserConfigPath()]})?
+
+  Config::getSettings = ->
+    Grim.deprecate "Use ::get(keyPath) instead"
+    _.deepExtend({}, @settings, @defaultSettings)
+
+  Config::getInt = (keyPath) ->
+    Grim.deprecate '''Config::getInt is no longer necessary. Use ::get instead.
+    Make sure the config option you are accessing has specified an `integer`
+    schema. See the schema section of
+    https://atom.io/docs/api/latest/Config for more info.'''
+    parseInt(@get(keyPath))
+
+  Config::getPositiveInt = (keyPath, defaultValue=0) ->
+    Grim.deprecate '''Config::getPositiveInt is no longer necessary. Use ::get instead.
+    Make sure the config option you are accessing has specified an `integer`
+    schema with `minimum: 1`. See the schema section of
+    https://atom.io/docs/api/latest/Config for more info.'''
+    Math.max(@getInt(keyPath), 0) or defaultValue
+
+  Config::toggle = (keyPath) ->
+    Grim.deprecate 'Config::toggle is no longer supported. Please remove from your code.'
+    @set(keyPath, not @get(keyPath))
+
+  Config::unobserve = (keyPath) ->
+    Grim.deprecate 'Config::unobserve no longer does anything. Call `.dispose()` on the object returned by Config::observe instead.'
+
+  Config::addScopedSettings = (source, selector, value, options) ->
+    Grim.deprecate("Use ::set instead")
+    settingsBySelector = {}
+    settingsBySelector[selector] = value
+    disposable = @scopedSettingsStore.addProperties(source, settingsBySelector, options)
+    @emitChangeEvent()
+    new Disposable =>
+      disposable.dispose()
+      @emitChangeEvent()
+
+  Config::settingsForScopeDescriptor = (scopeDescriptor, keyPath) ->
+    Grim.deprecate("Use Config::getAll instead")
+    entries = @getAll(null, scope: scopeDescriptor)
+    value for {value} in entries when _.valueForKeyPath(value, keyPath)?

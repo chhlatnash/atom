@@ -5,6 +5,10 @@ window.onload = function() {
   try {
     var startTime = Date.now();
 
+    process.on('unhandledRejection', function(error, promise) {
+      console.error('Unhandled promise rejection %o with error: %o', promise, error);
+    });
+
     // Ensure ATOM_HOME is always set before anything else is required
     setupAtomHome();
 
@@ -33,6 +37,8 @@ window.onload = function() {
     ModuleCache = require('../src/module-cache');
     ModuleCache.register(loadSettings);
     ModuleCache.add(loadSettings.resourcePath);
+
+    require('grim').includeDeprecatedAPIs = !loadSettings.apiPreviewMode;
 
     // Start the crash reporter before anything else.
     require('crash-reporter').start({

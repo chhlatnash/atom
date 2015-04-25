@@ -4,7 +4,6 @@ _ = require 'underscore-plus'
 
 CursorsComponent = require './cursors-component'
 HighlightsComponent = require './highlights-component'
-OverlayManager = require './overlay-manager'
 
 DummyLineNode = $$(-> @div className: 'line', style: 'position: absolute; visibility: hidden;', => @span 'x')[0]
 AcceptFilter = {acceptNode: -> NodeFilter.FILTER_ACCEPT}
@@ -30,22 +29,18 @@ class LinesComponent
     @domNode.classList.add('lines')
 
     @cursorsComponent = new CursorsComponent(@presenter)
-    @domNode.appendChild(@cursorsComponent.domNode)
+    @domNode.appendChild(@cursorsComponent.getDomNode())
 
     @highlightsComponent = new HighlightsComponent(@presenter)
-    @domNode.appendChild(@highlightsComponent.domNode)
+    @domNode.appendChild(@highlightsComponent.getDomNode())
 
     if @useShadowDOM
       insertionPoint = document.createElement('content')
       insertionPoint.setAttribute('select', '.overlayer')
       @domNode.appendChild(insertionPoint)
 
-      insertionPoint = document.createElement('content')
-      insertionPoint.setAttribute('select', 'atom-overlay')
-      @overlayManager = new OverlayManager(@presenter, @hostElement)
-      @domNode.appendChild(insertionPoint)
-    else
-      @overlayManager = new OverlayManager(@presenter, @domNode)
+  getDomNode: ->
+    @domNode
 
   updateSync: (state) ->
     @newState = state.content
@@ -81,8 +76,6 @@ class LinesComponent
 
     @cursorsComponent.updateSync(state)
     @highlightsComponent.updateSync(state)
-
-    @overlayManager?.render(state)
 
     @oldState.indentGuidesVisible = @newState.indentGuidesVisible
     @oldState.scrollWidth = @newState.scrollWidth
